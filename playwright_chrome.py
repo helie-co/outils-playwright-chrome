@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import shlex
 import subprocess
 import sys
 import time
@@ -321,7 +322,9 @@ def start() -> dict:
     command = [sys.executable, str(Path(__file__).resolve()), "--daemon"]
     flags = 0
     if os.name == "nt":
-        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        # CREATE_NEW_PROCESS_GROUP conserve l'accès à la session graphique.
+        # DETACHED_PROCESS peut empêcher Chromium headful d'afficher sa fenêtre.
+        flags = subprocess.CREATE_NEW_PROCESS_GROUP
     subprocess.Popen(command, cwd=str(ROOT), env=os.environ.copy(), creationflags=flags,
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      close_fds=True)
@@ -500,9 +503,52 @@ def run_tests() -> int:
     return 0 if result.wasSuccessful() else 1
 
 
+def print_result(result: dict, json_mode: bool = False) -> None:
+    if json_mode:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
+    if result.get("running") is not None:
+        print("Chrome Playwright actif." if result.get("running") else "Chrome Playwright arrêté.")
+    if result.get("url"):
+        print(f"URL    : {result['url']}")
+    if result.get("title"):
+        print(f"Titre  : {result['title']}")
+    if result.get("fichier"):
+        print(f"Fichier: {result['fichier']}")
+    if result.get("message"):
+        print(result["message"])
+    if not any(key in result for key in ("running", "url", "title", "fichier", "message")):
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def interactive_shell(json_mode: bool = False) -> int:
+    print("Mode terminal interactif Playwright Chrome. Tapez 'aide' ou 'quitter'.")
+    while True:
+        try:
+            line = input("playwright-chrome> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 0
+        if not line:
+            continue
+        if line.lower() in {"quitter", "exit", "quit"}:
+            return 0
+        if line.lower() in {"aide", "help"}:
+            parser().print_help()
+            continue
+        try:
+            command_args = shlex.split(line, posix=True)
+            if json_mode and "--json" not in command_args:
+                command_args.insert(0, "--json")
+            main(command_args)
+        except Exception as error:
+            print(f"Erreur: {error}")
+
+
 def parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Chrome visible et persistant piloté par Playwright.")
     parser.add_argument("--daemon", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--json", dest="json_mode", action="store_true", help="Sortie JSON machine lisible.")
     commands = parser.add_subparsers(dest="command", required=False)
     commands.add_parser("etat")
     commands.add_parser("demarrer")
@@ -541,7 +587,7 @@ def parser() -> argparse.ArgumentParser:
     lister.add_argument("--dossier")
     exporter = commands.add_parser("exporter")
     exporter.add_argument("--markdown")
-    exporter.add_argument("--json")
+    exporter.add_argument("--json", dest="json_file")
     commands.add_parser("tester")
     return parser
 
@@ -550,6 +596,8 @@ def main(argv: list[str] | None = None) -> int:
     arguments = parser().parse_args(argv)
     if arguments.daemon:
         return daemon()
+    if arguments.command is None:
+        return interactive_shell(arguments.json_mode)
     if arguments.command == "tester":
         return run_tests()
     if arguments.command == "demarrer":
@@ -589,11 +637,11 @@ def main(argv: list[str] | None = None) -> int:
     elif arguments.command == "lister":
         result = list_recipes(arguments.dossier)
     elif arguments.command == "exporter":
-        result = export_page(arguments.markdown, arguments.json)
+        result = export_page(arguments.markdown, arguments.json_file)
     else:
         parser().print_help()
         return 0
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    print_result(result, arguments.json_mode)
     return 0
 
 
