@@ -357,6 +357,7 @@ def daemon() -> int:
         )
         context.set_default_timeout(8000)
         page = context.pages[0] if context.pages else context.new_page()
+        page.bring_to_front()
         recording = {"active": False, "nom": "scenario", "etapes": []}
         hooked_pages: set[int] = set()
 
@@ -423,6 +424,7 @@ def daemon() -> int:
                         elif action in {"open", "navigate"}:
                             page = page if page in context.pages else context.new_page()
                             page.goto(str(payload["url"]), wait_until="domcontentloaded")
+                            page.bring_to_front()
                             result = {"url": page.url, "title": page.title()}
                         elif action == "tabs":
                             result = {"tabs": [{"index": i, "url": tab.url, "title": tab.title()} for i, tab in enumerate(context.pages)]}
