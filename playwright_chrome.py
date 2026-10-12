@@ -573,10 +573,24 @@ def interactive_candidates(line: str) -> list[str]:
     return [choice for choice in choices if choice.lower().startswith(prefix.lower())]
 
 
-def interactive_input(prompt: str) -> str:
+def interactive_input(prompt: str, history: list[str] | None = None) -> str:
     if msvcrt is None:
         return input(prompt)
     text: list[str] = []
+    position = 0
+    history = history or []
+    history_index = len(history)
+    rendered_length = 0
+
+    def redraw() -> None:
+        nonlocal rendered_length
+        value = "".join(text)
+        clear = max(rendered_length, len(value)) + 1
+        print("\r" + prompt + value + (" " * clear) + "\r" + prompt + value, end="", flush=True)
+        if position < len(value):
+            print("\b" * (len(value) - position), end="", flush=True)
+        rendered_length = len(value)
+
     print(prompt, end="", flush=True)
     while True:
         char = msvcrt.getwch()
@@ -585,10 +599,25 @@ def interactive_input(prompt: str) -> str:
             return "".join(text).strip()
         if char == "\x03":
             raise KeyboardInterrupt
+        if char in {"\x00", "\xe0"}:
+            key = msvcrt.getwch()
+            if key == "K" and position > 0:
+                position -= 1
+            elif key == "M" and position < len(text):
+                position += 1
+            elif key in {"H", "P"} and history:
+                history_index = max(0, history_index - 1) if key == "H" else min(len(history), history_index + 1)
+                text = list(history[history_index]) if history_index < len(history) else []
+                position = len(text)
+            elif key == "S" and position < len(text):
+                del text[position]
+            redraw()
+            continue
         if char == "\b":
-            if text:
-                text.pop()
-                print("\b \b", end="", flush=True)
+            if position:
+                del text[position - 1]
+                position -= 1
+            redraw()
         elif char == "\t":
             current = "".join(text)
             base = current.rfind(" ") + 1
@@ -596,12 +625,13 @@ def interactive_input(prompt: str) -> str:
             if choices:
                 old = "".join(text[base:])
                 replacement = choices[0]
-                print("\b" * len(old) + " " * len(old) + "\b" * len(old), end="", flush=True)
                 text[base:] = list(replacement)
-                print(replacement, end="", flush=True)
+                position = len(text)
+            redraw()
         elif char.isprintable():
-            text.append(char)
-            print(char, end="", flush=True)
+            text.insert(position, char)
+            position += 1
+            redraw()
     if result.get("running") is not None:
         print("Chrome Playwright actif." if result.get("running") else "Chrome Playwright arrêté.")
     if result.get("url"):
@@ -618,14 +648,16 @@ def interactive_input(prompt: str) -> str:
 
 def interactive_shell(json_mode: bool = False) -> int:
     print("Mode terminal interactif Playwright Chrome. Tapez 'aide' ou 'quitter'.")
+    history: list[str] = []
     while True:
         try:
-            line = interactive_input("playwright-chrome> ")
+            line = interactive_input("playwright-chrome> ", history)
         except (EOFError, KeyboardInterrupt):
             print()
             return 0
         if not line:
             continue
+        history.append(line)
         if line.lower() in {"quitter", "exit", "quit"}:
             return 0
         if line.lower() in {"aide", "help"}:
