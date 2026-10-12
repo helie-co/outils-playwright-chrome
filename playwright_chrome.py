@@ -14,6 +14,11 @@ import time
 import unittest
 import re
 
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
+
 
 ROOT = Path(__file__).resolve().parent
 STATE_DIR = ROOT / "etat"
@@ -506,6 +511,92 @@ def run_tests() -> int:
 def print_result(result: dict, json_mode: bool = False) -> None:
     if json_mode:
         print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+INTERACTIVE_COMMANDS = [
+    "etat", "demarrer", "arreter", "ouvrir", "naviguer", "onglets", "capture",
+    "lire", "cliquer", "remplir", "enregistrer", "enregistrer-session",
+    "arreter-enregistrement", "executer", "lister", "exporter", "tester", "aide", "quitter",
+]
+INTERACTIVE_OPTIONS = {
+    "ouvrir": ["--url"], "naviguer": ["--url"],
+    "capture": ["--fichier", "--pleine-page"],
+    "cliquer": ["--texte", "--exact"],
+    "remplir": ["--selecteur", "--valeur"],
+    "enregistrer": ["--fichier", "--nom", "--requete", "--moteur"],
+    "enregistrer-session": ["--nom", "--fichier"],
+    "arreter-enregistrement": ["--nom", "--fichier"],
+    "executer": ["--fichier", "--fois", "--sortie"],
+    "lister": ["--dossier"],
+    "exporter": ["--markdown", "--json"],
+}
+
+
+def interactive_candidates(line: str) -> list[str]:
+    trailing_space = line.endswith((" ", "\t"))
+    try:
+        terms = shlex.split(line, posix=True)
+    except ValueError:
+        terms = line.split()
+    if trailing_space:
+        prefix = ""
+    else:
+        prefix = terms[-1] if terms else ""
+    if len(terms) <= 1 and not trailing_space:
+        choices = INTERACTIVE_COMMANDS
+    else:
+        command = terms[0] if terms else ""
+        choices = INTERACTIVE_OPTIONS.get(command, [])
+    return [choice for choice in choices if choice.lower().startswith(prefix.lower())]
+
+
+def interactive_input(prompt: str) -> str:
+    if msvcrt is None:
+        return input(prompt)
+    text: list[str] = []
+    position = 0
+    completion: tuple[str, int, list[str], int] | None = None
+    print(prompt, end="", flush=True)
+    while True:
+        char = msvcrt.getwch()
+        if char == "\r":
+            print()
+            return "".join(text).strip()
+        if char == "\x03":
+            raise KeyboardInterrupt
+        if char in {"\x00", "\xe0"}:
+            key = msvcrt.getwch()
+            if key == "K" and position > 0:
+                position -= 1
+            elif key == "M" and position < len(text):
+                position += 1
+            continue
+        if char == "\b":
+            if position:
+                del text[position - 1]
+                position -= 1
+            completion = None
+        elif char == "\t":
+            current = "".join(text)
+            if completion and completion[0] == current:
+                base, choices, index = completion[1], completion[2], (completion[3] + 1) % len(completion[2])
+            else:
+                base = current.rfind(" ") + 1
+                choices = interactive_candidates(current)
+                index = 0
+            if choices:
+                replacement = choices[index]
+                text[base:position] = list(replacement)
+                position = base + len(replacement)
+                completion = ("".join(text), base, choices, index)
+        elif char.isprintable():
+            text.insert(position, char)
+            position += 1
+            completion = None
+        else:
+            continue
+        rendered = "".join(text)
+        print("\r" + prompt + rendered + " " + "\r" + prompt + rendered[:position], end="", flush=True)
         return
     if result.get("running") is not None:
         print("Chrome Playwright actif." if result.get("running") else "Chrome Playwright arrêté.")
@@ -525,7 +616,7 @@ def interactive_shell(json_mode: bool = False) -> int:
     print("Mode terminal interactif Playwright Chrome. Tapez 'aide' ou 'quitter'.")
     while True:
         try:
-            line = input("playwright-chrome> ").strip()
+            line = interactive_input("playwright-chrome> ")
         except (EOFError, KeyboardInterrupt):
             print()
             return 0
