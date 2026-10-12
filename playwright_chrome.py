@@ -140,17 +140,24 @@ def html_to_markdown(html: str) -> str:
     return converter.result()
 
 
-def export_page(markdown_file: str | None = None, json_file: str | None = None) -> dict:
+def export_page(markdown_file: str | None = None, json_file: str | None = None,
+                html_file: str | None = None, format: str = "tous") -> dict:
     response = request({"action": "export_page"})
-    EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    markdown_path = Path(markdown_file).expanduser().resolve() if markdown_file else EXPORTS_DIR / "page.md"
-    json_path = Path(json_file).expanduser().resolve() if json_file else EXPORTS_DIR / "page.json"
-    markdown_path.parent.mkdir(parents=True, exist_ok=True)
-    json_path.parent.mkdir(parents=True, exist_ok=True)
-    markdown_path.write_text(html_to_markdown(response["html"]), encoding="utf-8")
-    json_path.write_text(json.dumps(response, ensure_ascii=False, indent=2), encoding="utf-8")
-    log_event("exportation", {"markdown": str(markdown_path), "json": str(json_path), "url": response.get("url")})
-    return {"markdown": str(markdown_path), "json": str(json_path), "url": response.get("url"), "title": response.get("title")}
+    formats = {"md", "json", "html"} if format == "tous" else {format}
+    result = {"url": response.get("url"), "title": response.get("title")}
+    destinations = {
+        "md": ("markdown", markdown_file, html_to_markdown(response["html"])),
+        "json": ("json", json_file, json.dumps(response, ensure_ascii=False, indent=2)),
+        "html": ("html", html_file, response["html"]),
+    }
+    for extension in sorted(formats):
+        key, explicit, content = destinations[extension]
+        target = Path(explicit).expanduser().resolve() if explicit else EXPORTS_DIR / ("page." + extension)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        result[key] = str(target)
+    log_event("exportation", result)
+    return result
 
 
 def read_state() -> dict | None:
@@ -556,7 +563,7 @@ def print_result(result: dict, json_mode: bool = False) -> None:
             print(f"  {tab['index']} : {tab['title']} — {tab['url']}")
     if "text" in result:
         print(result["text"])
-    for key in ("selector", "file", "markdown", "json", "sortie"):
+    for key in ("selector", "file", "markdown", "json", "html", "sortie"):
         if key in result:
             print(f"{key} : {result[key]}")
 
@@ -577,7 +584,7 @@ INTERACTIVE_OPTIONS = {
     "arreter-enregistrement": ["--nom", "--fichier"],
     "executer": ["--fichier", "--nom", "--fois", "--sortie"],
     "lister": ["--dossier"],
-    "exporter": ["--markdown", "--fichier-json", "--json"],
+    "exporter": ["--format", "--markdown", "--fichier-json", "--html", "--json"],
 }
 
 
@@ -721,6 +728,8 @@ def parser() -> argparse.ArgumentParser:
     exporter = commands.add_parser("exporter")
     exporter.add_argument("--markdown")
     exporter.add_argument("--fichier-json", dest="json_file")
+    exporter.add_argument("--html")
+    exporter.add_argument("--format", choices=["md", "json", "html", "tous"], default="tous")
     commands.add_parser("tester")
     return parser
 
@@ -782,7 +791,7 @@ def main(argv: list[str] | None = None) -> int:
     elif arguments.command == "lister":
         result = list_recipes(arguments.dossier)
     elif arguments.command == "exporter":
-        result = export_page(arguments.markdown, arguments.json_file)
+        result = export_page(arguments.markdown, arguments.json_file, arguments.html, arguments.format)
     else:
         parser().print_help()
         return 0

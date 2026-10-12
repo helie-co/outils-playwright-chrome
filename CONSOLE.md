@@ -37,3 +37,17 @@ outils playwright-chrome executer --nom outlook-connection --json
 
 Pour exporter la page en JSON dans un fichier, utilisez `exporter --fichier-json page.json`.
 L'option `--json` est désormais exclusivement réservée au format de réponse.
+
+Export de la page courante :
+
+```text
+exporter --format md
+exporter --format json
+exporter --format html
+exporter
+```
+
+Sans format, les trois fichiers sont créés dans `exports/page.md`,
+`exports/page.json` et `exports/page.html` (remplacés à chaque export).
+Pour choisir un chemin, utilisez `--markdown CHEMIN`, `--fichier-json CHEMIN`
+ou `--html CHEMIN`. Le HTML représente le DOM courant après chargement.

@@ -1,6 +1,8 @@
 import io
 import json
 import unittest
+import tempfile
+from pathlib import Path
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
@@ -8,6 +10,22 @@ import playwright_chrome as app
 
 
 class ConsoleTests(unittest.TestCase):
+    def test_export_formats_and_content(self):
+        page = {"url": "https://example.test", "title": "Test",
+                "html": "<html><body><h1>Bonjour</h1></body></html>"}
+        for format in ("md", "json", "html", "tous"):
+            with tempfile.TemporaryDirectory() as directory, \
+                    patch.object(app, "EXPORTS_DIR", Path(directory)), \
+                    patch.object(app, "request", return_value=page), \
+                    patch.object(app, "log_event"):
+                app.export_page(format=format)
+                expected = {"page.md", "page.json", "page.html"} if format == "tous" else {"page." + format}
+                self.assertEqual({p.name for p in Path(directory).iterdir()}, expected)
+                if format in ("html", "tous"):
+                    self.assertEqual((Path(directory) / "page.html").read_text(encoding="utf-8"), page["html"])
+                if format in ("json", "tous"):
+                    self.assertEqual(json.loads((Path(directory) / "page.json").read_text(encoding="utf-8")), page)
+
     def test_windows_paths_survive_console_parsing(self):
         path = r"C:\Users\Jean Francois\scenarios\outlook.json"
         self.assertEqual(app.split_console_command('executer --fichier "' + path + '"'),
