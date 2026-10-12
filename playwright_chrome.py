@@ -318,6 +318,7 @@ def execute_recipe(recipe_file: str, repetitions: int = 1, output_file: str | No
 
 
 def start() -> dict:
+    configure_environment()
     try:
         return request({"action": "status"})
     except (OSError, RuntimeError, json.JSONDecodeError):
@@ -325,14 +326,23 @@ def start() -> dict:
     if STATE_FILE.exists():
         safe_unlink(STATE_FILE)
     command = [sys.executable, str(Path(__file__).resolve()), "--daemon"]
-    flags = 0
+    environment = os.environ.copy()
     if os.name == "nt":
-        # CREATE_NEW_PROCESS_GROUP conserve l'accès à la session graphique.
-        # DETACHED_PROCESS peut empêcher Chromium headful d'afficher sa fenêtre.
-        flags = subprocess.CREATE_NEW_PROCESS_GROUP
-    subprocess.Popen(command, cwd=str(ROOT), env=os.environ.copy(), creationflags=flags,
-                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     close_fds=True)
+        quote = lambda value: "'" + str(value).replace("'", "''") + "'"
+        powershell_command = (
+            f"Start-Process -FilePath {quote(sys.executable)} "
+            f"-ArgumentList {quote(str(Path(__file__).resolve()))},'--daemon' "
+            f"-WorkingDirectory {quote(str(ROOT))} -WindowStyle Hidden"
+        )
+        subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", powershell_command],
+            cwd=str(ROOT), env=environment, stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+        )
+    else:
+        subprocess.Popen(command, cwd=str(ROOT), env=environment,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, close_fds=True, start_new_session=True)
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         try:
