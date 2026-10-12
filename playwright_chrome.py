@@ -294,7 +294,8 @@ def stop_recording_session(name: str | None = None, scenario_file: str | None = 
     }
     write_json(target, scenario)
     log_event("enregistrement-session", {"fichier": str(target), "etapes": len(scenario["etapes"])})
-    return {"fichier": str(target), "etapes": len(scenario["etapes"]), "scenario": scenario}
+    return {"fichier": str(target), "etapes": len(scenario["etapes"]), "scenario": scenario,
+            "enregistrement": False, "nom": scenario_name}
 
 
 def execute_recipe(recipe_file: str, repetitions: int = 1, output_file: str | None = None) -> dict:
@@ -423,6 +424,10 @@ def daemon() -> int:
         running = True
         try:
             while running:
+                # Dispatch browser events even when no terminal command arrives.
+                # time.sleep/socket.accept alone do not pump sync Playwright.
+                if context.pages:
+                    context.pages[0].wait_for_timeout(50)
                 try:
                     connection, _ = server.accept()
                 except socket.timeout:
@@ -494,6 +499,8 @@ def daemon() -> int:
                                     add_recorded_step({"action": "ouvrir", "url": tab.url})
                             result = {"enregistrement": True, "nom": recording["nom"], "etapes": 0}
                         elif action == "record_stop":
+                            for tab in context.pages:
+                                tab.wait_for_timeout(100)
                             recording["active"] = False
                             result = {"enregistrement": False, "nom": recording["nom"], "etapes": recording["etapes"]}
                         elif action == "stop":
@@ -532,17 +539,35 @@ def print_result(result: dict, json_mode: bool = False) -> None:
         print(f"Fichier: {result['fichier']}")
     if result.get("message"):
         print(result["message"])
-    if not any(key in result for key in ("running", "url", "title", "fichier", "message")):
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+    if "enregistrement" in result:
+        state = "démarré" if result["enregistrement"] else "arrêté"
+        print(f"Enregistrement « {result.get('nom', 'scenario')} » {state}.")
+    if isinstance(result.get("etapes"), int):
+        print(f"Étapes enregistrées : {result['etapes']}")
+    if "scenarios" in result:
+        scenarios = result["scenarios"]
+        print(f"Scénarios enregistrés : {len(scenarios)}")
+        for scenario in scenarios:
+            print(f"  {scenario['nom']} — {scenario['fichier']}")
+    if "executions" in result:
+        print(f"Scénario rejoué : {len(result['executions'])} exécution(s).")
+    if "tabs" in result:
+        for tab in result["tabs"]:
+            print(f"  {tab['index']} : {tab['title']} — {tab['url']}")
+    if "text" in result:
+        print(result["text"])
+    for key in ("selector", "file", "markdown", "json", "sortie"):
+        if key in result:
+            print(f"{key} : {result[key]}")
 
 
 INTERACTIVE_COMMANDS = [
     "etat", "demarrer", "arreter", "ouvrir", "naviguer", "onglets", "capture",
     "lire", "cliquer", "remplir", "touche", "enregistrer", "enregistrer-session",
-    "arreter-enregistrement", "executer", "lister", "exporter", "tester", "aide", "quitter",
+    "arreter-enregistrement", "enregistrement", "retour", "executer", "lister", "exporter", "tester", "aide", "quitter",
 ]
 INTERACTIVE_OPTIONS = {
-    "ouvrir": ["--url"], "naviguer": ["--url"],
+    "demarrer": ["--nom"], "ouvrir": ["--url"], "naviguer": ["--url"],
     "capture": ["--fichier", "--pleine-page"],
     "cliquer": ["--texte", "--exact"],
     "remplir": ["--selecteur", "--valeur"],
@@ -550,9 +575,9 @@ INTERACTIVE_OPTIONS = {
     "enregistrer": ["--fichier", "--nom", "--requete", "--moteur"],
     "enregistrer-session": ["--nom", "--fichier"],
     "arreter-enregistrement": ["--nom", "--fichier"],
-    "executer": ["--fichier", "--fois", "--sortie"],
+    "executer": ["--fichier", "--nom", "--fois", "--sortie"],
     "lister": ["--dossier"],
-    "exporter": ["--markdown", "--json"],
+    "exporter": ["--markdown", "--fichier-json", "--json"],
 }
 
 
@@ -575,64 +600,39 @@ def interactive_candidates(line: str) -> list[str]:
 
 
 def interactive_input(prompt: str, history: list[str] | None = None) -> str:
-    if msvcrt is None:
-        return input(prompt)
-    text: list[str] = []
-    history = history or []
-    history_index = len(history)
-    print(prompt, end="", flush=True)
-    while True:
-        char = msvcrt.getwch()
-        if char == "\r":
-            print()
-            return "".join(text).strip()
-        if char == "\x03":
-            raise KeyboardInterrupt
-        if char in {"\x00", "\xe0"}:
-            key = msvcrt.getwch()
-            if key in {"H", "P"} and history:
-                history_index = max(0, history_index - 1) if key == "H" else min(len(history), history_index + 1)
-                old = "".join(text)
-                text = list(history[history_index]) if history_index < len(history) else []
-                print("\b" * len(old) + " " * len(old) + "\b" * len(old) + "".join(text), end="", flush=True)
-            continue
-        if char == "\b":
-            if text:
-                text.pop()
-                print("\b \b", end="", flush=True)
-        elif char == "\t":
-            current = "".join(text)
-            base = current.rfind(" ") + 1
-            choices = interactive_candidates(current)
-            if choices:
-                old = "".join(text[base:])
-                replacement = choices[0]
-                print("\b" * len(old) + " " * len(old) + "\b" * len(old), end="", flush=True)
-                text[base:] = list(replacement)
-                print(replacement, end="", flush=True)
-        elif char.isprintable():
-            text.append(char)
-            print(char, end="", flush=True)
-    if result.get("running") is not None:
-        print("Chrome Playwright actif." if result.get("running") else "Chrome Playwright arrêté.")
-    if result.get("url"):
-        print(f"URL    : {result['url']}")
-    if result.get("title"):
-        print(f"Titre  : {result['title']}")
-    if result.get("fichier"):
-        print(f"Fichier: {result['fichier']}")
-    if result.get("message"):
-        print(result["message"])
-    if not any(key in result for key in ("running", "url", "title", "fichier", "message")):
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+    from prompt_toolkit import prompt as terminal_prompt
+    from prompt_toolkit.completion import Completer, Completion
+    from prompt_toolkit.history import InMemoryHistory
+
+    class CommandCompleter(Completer):
+        def get_completions(self, document, complete_event):
+            before = document.text_before_cursor
+            word = before.rsplit(" ", 1)[-1]
+            for candidate in interactive_candidates(before):
+                yield Completion(candidate, start_position=-len(word))
+
+    return terminal_prompt(
+        prompt,
+        completer=CommandCompleter(),
+        history=InMemoryHistory(history or []),
+        complete_while_typing=False,
+    ).strip()
+
+
+def split_console_command(line: str) -> list[str]:
+    # Preserve Windows backslashes while allowing quoted values with spaces.
+    return [part[1:-1] if len(part) >= 2 and part[0] == part[-1] and part[0] in {"'", '"'}
+            else part for part in shlex.split(line, posix=False)]
 
 
 def interactive_shell(json_mode: bool = False) -> int:
-    print("Mode terminal interactif Playwright Chrome. Tapez 'aide' ou 'quitter'.")
+    print("Console Playwright Chrome — Tab : complétion, flèches : édition/historique.")
+    print("Tapez 'enregistrement' pour gérer les scénarios, 'aide' ou 'quitter'.")
     history: list[str] = []
+    recording_menu = False
     while True:
         try:
-            line = interactive_input("playwright-chrome> ", history)
+            line = interactive_input("enregistrement> " if recording_menu else "playwright-chrome> ", history)
         except (EOFError, KeyboardInterrupt):
             print()
             return 0
@@ -640,12 +640,30 @@ def interactive_shell(json_mode: bool = False) -> int:
             continue
         history.append(line)
         if line.lower() in {"quitter", "exit", "quit"}:
+            if recording_menu:
+                recording_menu = False
+                continue
             return 0
+        if line.lower() == "retour":
+            recording_menu = False
+            continue
+        if line.lower() == "enregistrement":
+            recording_menu = True
+            print("Commandes : demarrer --nom NOM, arreter, lister, executer --nom NOM, retour.")
+            continue
         if line.lower() in {"aide", "help"}:
             parser().print_help()
             continue
         try:
-            command_args = shlex.split(line, posix=True)
+            command_args = split_console_command(line)
+            if command_args[:1] == ["outils"]:
+                command_args.pop(0)
+            if command_args[:1] == ["playwright-chrome"]:
+                command_args.pop(0)
+            if recording_menu and command_args:
+                command_args[0] = {"demarrer": "enregistrer-session", "arreter": "arreter-enregistrement"}.get(command_args[0], command_args[0])
+            if not command_args:
+                continue
             if json_mode and "--json" not in command_args:
                 command_args.insert(0, "--json")
             main(command_args)
@@ -693,23 +711,32 @@ def parser() -> argparse.ArgumentParser:
     arreter_enregistrement.add_argument("--nom")
     arreter_enregistrement.add_argument("--fichier")
     executer = commands.add_parser("executer")
-    executer.add_argument("--fichier", required=True)
+    scenario_source = executer.add_mutually_exclusive_group(required=True)
+    scenario_source.add_argument("--fichier")
+    scenario_source.add_argument("--nom")
     executer.add_argument("--fois", type=int, default=1)
     executer.add_argument("--sortie")
     lister = commands.add_parser("lister")
     lister.add_argument("--dossier")
     exporter = commands.add_parser("exporter")
     exporter.add_argument("--markdown")
-    exporter.add_argument("--json", dest="json_file")
+    exporter.add_argument("--fichier-json", dest="json_file")
     commands.add_parser("tester")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    arguments = parser().parse_args(argv)
+    raw = list(sys.argv[1:] if argv is None else argv)
+    json_mode = "--json" in raw or os.environ.get("OUTILS_MODE_JSON") == "1"
+    raw = [arg for arg in raw if arg != "--json"]
+    arguments = parser().parse_args(raw)
+    arguments.json_mode = json_mode
     if arguments.daemon:
         return daemon()
     if arguments.command is None:
+        if json_mode:
+            print_result({"commandes": INTERACTIVE_COMMANDS}, True)
+            return 0
         return interactive_shell(arguments.json_mode)
     if arguments.command == "tester":
         return run_tests()
@@ -748,7 +775,10 @@ def main(argv: list[str] | None = None) -> int:
     elif arguments.command == "executer":
         if arguments.fois < 1:
             raise ValueError("--fois doit être supérieur ou égal à 1.")
-        result = execute_recipe(arguments.fichier, arguments.fois, arguments.sortie)
+        source = arguments.fichier or str(SCENARIOS_DIR / (arguments.nom + ".json"))
+        if not json.loads(Path(source).read_text(encoding="utf-8")).get("etapes"):
+            raise ValueError("Ce scénario contient 0 étape. Enregistrez un parcours avant de le rejouer.")
+        result = execute_recipe(source, arguments.fois, arguments.sortie)
     elif arguments.command == "lister":
         result = list_recipes(arguments.dossier)
     elif arguments.command == "exporter":
@@ -761,4 +791,11 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except (RuntimeError, ValueError, OSError) as error:
+        if "--json" in sys.argv or os.environ.get("OUTILS_MODE_JSON") == "1":
+            print(json.dumps({"ok": False, "erreur": str(error)}, ensure_ascii=False))
+        else:
+            print(f"Erreur : {error}", file=sys.stderr)
+        raise SystemExit(1)
