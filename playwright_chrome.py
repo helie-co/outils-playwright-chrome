@@ -626,6 +626,8 @@ def interactive_shell(json_mode: bool = False) -> int:
             if json_mode and "--json" not in command_args:
                 command_args.insert(0, "--json")
             main(command_args)
+        except SystemExit as error:
+            print(f"Commande invalide (code {error.code}).")
         except Exception as error:
             print(f"Erreur: {error}")
 
