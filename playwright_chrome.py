@@ -538,7 +538,7 @@ def print_result(result: dict, json_mode: bool = False) -> None:
 
 INTERACTIVE_COMMANDS = [
     "etat", "demarrer", "arreter", "ouvrir", "naviguer", "onglets", "capture",
-    "lire", "cliquer", "remplir", "enregistrer", "enregistrer-session",
+    "lire", "cliquer", "remplir", "touche", "enregistrer", "enregistrer-session",
     "arreter-enregistrement", "executer", "lister", "exporter", "tester", "aide", "quitter",
 ]
 INTERACTIVE_OPTIONS = {
@@ -546,6 +546,7 @@ INTERACTIVE_OPTIONS = {
     "capture": ["--fichier", "--pleine-page"],
     "cliquer": ["--texte", "--exact"],
     "remplir": ["--selecteur", "--valeur"],
+    "touche": ["--selecteur", "--touche"],
     "enregistrer": ["--fichier", "--nom", "--requete", "--moteur"],
     "enregistrer-session": ["--nom", "--fichier"],
     "arreter-enregistrement": ["--nom", "--fichier"],
@@ -677,6 +678,9 @@ def parser() -> argparse.ArgumentParser:
     remplir = commands.add_parser("remplir")
     remplir.add_argument("--selecteur", required=True)
     remplir.add_argument("--valeur", required=True)
+    touche = commands.add_parser("touche")
+    touche.add_argument("--selecteur", required=True)
+    touche.add_argument("--touche", default="Enter")
     enregistrer = commands.add_parser("enregistrer")
     enregistrer.add_argument("--fichier")
     enregistrer.add_argument("--nom")
@@ -732,6 +736,8 @@ def main(argv: list[str] | None = None) -> int:
         result = request({"action": "click", "text": arguments.texte, "exact": arguments.exact})
     elif arguments.command == "remplir":
         result = request({"action": "fill", "selector": arguments.selecteur, "value": arguments.valeur})
+    elif arguments.command == "touche":
+        result = request({"action": "press", "selector": arguments.selecteur, "key": arguments.touche})
     elif arguments.command == "enregistrer":
         fichier = arguments.fichier or str(default_recipe_file(arguments.nom))
         result = record_search(fichier, arguments.requete, arguments.moteur)
