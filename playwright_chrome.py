@@ -596,7 +596,9 @@ def interactive_input(prompt: str) -> str:
         else:
             continue
         rendered = "".join(text)
-        print("\r" + prompt + rendered + " " + "\r" + prompt + rendered[:position], end="", flush=True)
+        suffix = len(rendered) - position
+        cursor_back = f"\x1b[{suffix}D" if suffix else ""
+        print("\r\x1b[2K" + prompt + rendered + cursor_back, end="", flush=True)
         return
     if result.get("running") is not None:
         print("Chrome Playwright actif." if result.get("running") else "Chrome Playwright arrêté.")
